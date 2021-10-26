@@ -1,5 +1,6 @@
 from collections import namedtuple
-from dataclass import dataclass
+from dataclasses import dataclass
+from numbers import Number
 
 import numpy as np
 from scipy.optimize import curve_fit
@@ -41,47 +42,6 @@ def fit(x, y, **kwargs):
     ))
 
 
-def fit_truncated(x, y, **kwargs):
-    """Wrapper around `scipy.optimize.curve_fit` for fitting a truncated Gaussian.
-
-    The following parameters are included:
-
-    * Sigma
-    * Amplitude
-    * Center
-    * Offset
-    * Left boundary
-    * Right boundary
-
-    Parameters
-    ----------
-    x, y : array_like
-        x- and y-coordinates of the data.
-    kwargs
-        Remaining arguments for `curve_fit`.
-
-    Returns
-    -------
-    result : :class:`FitResultTruncatedGauss`
-    """
-    kwargs.setdefault('method', 'trf')
-    p0 = (
-        *compute_p0_for_gauss(x, y),
-        x[0],
-        x[-1],
-    )
-    popt, pcov = curve_fit(
-        truncated_gauss, x, y,
-        p0=p0,
-        **kwargs,
-    )
-    perr = np.sqrt(np.diag(pcov))
-    return FitResultTruncatedGauss(*(
-        ufloat(val, err)
-        for val, err in zip(popt, perr)
-    ))
-
-
 def fit_peak(x, y, *, dx, **kwargs):
     """Wrapper around `scipy.optimize.curve_fit` for fitting the peak region of a Gaussian.
 
@@ -107,22 +67,32 @@ def fit_peak(x, y, *, dx, **kwargs):
         The `offset` is not included in the fit and hence its standard deviation
         is set to zero.
     """
-    if isinstance(dx, float):
+    if isinstance(dx, Number):
         dx = (dx, dx)
-    p0 = compute_p0_for_gauss(x, y)
-    y = y - p0.offset
-    x_peak = x[y.argmax()]
+
+    offset = compute_p0_offset(x, y)
+    y = y - offset
+
+    amplitude = compute_p0_amplitude(x, y, k=3)
+    center = compute_p0_center(x, y, k=3)
+    il = np.searchsorted(x, center - 0.9*dx[0])  # 10% margin to +-dx fit region
+    ir = np.searchsorted(x, center + 0.9*dx[1])
+    sigma = np.mean([
+        dx[0] / np.sqrt(2*np.log(amplitude/y[il])),
+        dx[1] / np.sqrt(2*np.log(amplitude/y[ir])),
+    ])
+
     mask = np.logical_and(
-        x >= x_peak - dx[0],
-        x <= x_peak + dx[1],
+        x >= center - dx[0],
+        x <= center + dx[1],
     )
     popt, pcov = curve_fit(
-        gauss, x, y,
-        p0=(p0.sigma, p0.amplitude, p0.center),
+        gauss, x[mask], y[mask],
+        p0=(sigma, amplitude, center),
         **kwargs,
     )
     perr = np.sqrt(np.diag(pcov))
-    popt = [*popt, p0.offset]  # add constant offset
+    popt = [*popt, offset]  # add constant offset
     perr = [*perr, 0]
     return FitResult(*(
         ufloat(val, err)
@@ -168,46 +138,52 @@ class FitResult:
     offset : ufloat
 
 
-@dataclass
-class FitResultTruncatedGauss(FitResult):
-    left : ufloat
-    right : ufloat
-
-
 P0 = namedtuple('P0', 'sigma amplitude center offset')
 
 
-def compute_p0_for_gauss(x, y):
+def compute_p0_for_gauss(x, y, *, p=0.5):
     """Compute initial parameter guess for :func:`gauss` function.
 
     Parameters
     ----------
     x, y : array_like
         x- and y-coordinates of the data.
+    p : float
+        Fraction of the y-maximum at which to compute the full width.
+        This is used to estimate the value of `sigma`.
 
     Returns
     -------
     initial_guess : :class:`P0`
     """
     return P0(
-        0.5*full_width_at(x, y, p=0.5) / np.sqrt(2*np.log(2)),  # sigma
-        y.max(),  # amplitude
-        x[y.argmax()],  # center
-        y[[0, -1]].mean(),  # offset
+        compute_p0_sigma(x, y, p=p),
+        compute_p0_amplitude(x, y),
+        compute_p0_center(x, y),
+        compute_p0_offset(x, y),
     )
+
+
+def compute_p0_sigma(x, y, *, p=0.5):
+    """Estimate the sigma from the full width at the p-th fraction of the y-maximum."""
+    return 0.5*full_width_at(x, y, p=p) / np.sqrt(2*np.log(1/p))
+
+
+def compute_p0_amplitude(x, y, *, k=1, k_offset=1):
+    """Estimate the amplitude by averaging the top-k y-values (subtracted by the offset)."""
+    return np.sort(y)[-k:].mean() - compute_p0_offset(x, y, k=k_offset)
+
+
+def compute_p0_center(x, y, *, k=1):
+    """Estimate the center from the mean position of the top-k y-values."""
+    return x[np.argsort(y)[-k:]].mean()
+
+
+def compute_p0_offset(x, y, *, k=1):
+    """Estimate the offset from the k left- and rightmost y-values."""
+    return y[[*range(0, k), *range(-k, 0)]].mean()
 
 
 def gauss(x, sigma, amplitude=1, center=0, offset=0):
     """Gaussian distribution"""
     return amplitude * np.exp(-0.5 * (x - center)**2 / sigma**2) + offset
-
-
-def truncated_gauss(x, sigma, amplitude=1, center=0, offset=0, left=-np.inf, right=np.inf):
-    """Gaussian distribution, truncated at `left` and `right` to value `offset`."""
-    result = amplitude * np.exp(-0.5 * (x - center)**2 / sigma**2) + offset
-    mask = np.logical_or(
-        x < left,
-        x > right,
-    )
-    result[mask] = offset
-    return result

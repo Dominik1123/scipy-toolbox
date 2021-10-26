@@ -28,7 +28,7 @@ def full_width_at(x, y, *, p: float = 0.5, k: int = 1):
     top_w = []
     for i, m in zip(top_i, top_y):
         left = np.interp(p*m, y[:i], x[:i])
-        right = np.interp(p*m, y[i:], x[i:])
+        right = np.interp(p*m, y[:i:-1], x[:i:-1])
         top_w.append(right - left)
     if len(top_w) == 1:
         return top_w[0]

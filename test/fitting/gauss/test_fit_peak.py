@@ -2,13 +2,15 @@ import matplotlib.pyplot as plt
 import numpy as np
 from scipy.stats import norm
 
-from scipy_toolbox.fitting.gauss import fit, gauss
+from scipy_toolbox.fitting.gauss import fit_peak, gauss
 
 
 if __name__ == '__main__':
-    x = np.linspace(-3, 3, 250)
+    x = np.linspace(-4, 4, 250)
     y = norm.pdf(x)
-    result = fit(x, y)
+    y[(x < -1) | (x > 1)] = 0
+    y = np.random.default_rng().normal(loc=y, scale=0.05*y.max())
+    result = fit_peak(x, y, dx=1)
 
     fig, ax = plt.subplots()
     ax.set_title(f'Fitted sigma: {result.sigma}')

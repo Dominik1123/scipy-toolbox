@@ -6,7 +6,7 @@
 
 ## Fit Gaussian
 
-`ting/gauss/test_fit.py`
+`python test/fitting/gauss/test_fit.py`
 
 ![Demo: Fit Gaussian](https://raw.githubusercontent.com/Dominik1123/scipy-toolbox/main/demo_fit_gaussian.png)
 
